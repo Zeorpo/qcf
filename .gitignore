@@ -1,0 +1,101 @@
+# ---------------------------------------------------------------------------
+# QCF .gitignore
+#
+# Ordering matters. Git does not descend into an excluded directory, so every
+# level that contains a re-included file must itself stay un-excluded. The data
+# rules below are written level by level for that reason; see
+# tests/contract/test_data_directory_protection.py, which asserts the behaviour
+# rather than trusting the patterns by inspection.
+# ---------------------------------------------------------------------------
+
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+sdist/
+wheels/
+*.egg-info/
+*.egg
+.eggs/
+MANIFEST
+
+# --- Environments ---------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# --- Secrets --------------------------------------------------------------
+# .env is never committed. .env.example carries safe placeholders only.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+credentials.json
+service-account*.json
+.secrets
+secrets.yaml
+secrets.yml
+
+# --- Test, type, and lint caches -----------------------------------------
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# --- Editors and OS -------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Notebooks ------------------------------------------------------------
+.ipynb_checkpoints/
+
+# --- Generated research artefacts ----------------------------------------
+# Stage reports and ADRs are tracked; generated run output is not.
+reports/incidents/*
+!reports/incidents/.gitkeep
+reports/research/*
+!reports/research/.gitkeep
+
+# --- Market data ----------------------------------------------------------
+# No market data may ever be tracked, real or fabricated. Only the directory
+# skeleton and its documentation are committed.
+/data/*
+!/data/README.md
+!/data/raw/
+!/data/interim/
+!/data/processed/
+!/data/quarantine/
+
+/data/raw/*
+!/data/raw/.gitkeep
+
+/data/interim/*
+!/data/interim/.gitkeep
+
+/data/processed/*
+!/data/processed/.gitkeep
+
+/data/quarantine/*
+!/data/quarantine/.gitkeep
