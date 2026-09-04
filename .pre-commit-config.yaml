@@ -1,0 +1,56 @@
+# Hook revisions are pinned. ruff-pre-commit is held at the same version as the
+# `ruff` entry in uv.lock, so a hook cannot disagree with CI about what "clean"
+# means.
+#
+# Install with: uv run pre-commit install
+minimum_pre_commit_version: "3.7.0"
+default_install_hook_types: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+        # A file this size in a research repository is almost always market data
+        # that slipped past .gitignore.
+        args: [--maxkb=512]
+      - id: detect-private-key
+      - id: check-symlinks
+      - id: destroyed-symlinks
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.6
+    hooks:
+      - id: ruff-format
+      - id: ruff-check
+        args: [--fix, --exit-non-zero-on-fix]
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        # uv.lock holds package hashes, which are high-entropy by construction
+        # and are not secrets.
+        exclude: ^uv\.lock$
+
+  - repo: local
+    hooks:
+      - id: project-boundary
+        name: QCF project boundary
+        # Fast, deterministic, read-only, and offline: it belongs at commit time,
+        # not only in CI, because a boundary caught late has already been pushed.
+        entry: uv run python scripts/check_project_boundary.py
+        language: system
+        pass_filenames: false
+        always_run: true
