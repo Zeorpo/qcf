@@ -1,0 +1,150 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qcf"
+version = "0.0.0"
+description = "Research and paper-simulation tooling for CME Euro FX futures (6E). No live order capability."
+readme = "README.md"
+requires-python = ">=3.12"
+# No authors, urls, or license identifier are declared: none has been supplied,
+# and inventing one would misstate provenance. See LICENSE_POLICY.md.
+classifiers = ["Private :: Do Not Upload"]
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "PyYAML>=6.0",
+    "structlog>=24.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "hypothesis>=6.100",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+    "types-PyYAML>=6.0",
+    "detect-secrets>=1.5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qcf"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/qcf", "README.md", "LICENSE_POLICY.md"]
+
+# ---------------------------------------------------------------------------
+# Ruff — formatting and linting
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = [
+    "A",    # builtin shadowing
+    "ANN",  # missing annotations
+    "ARG",  # unused arguments
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "D",    # docstrings
+    "DTZ",  # naive datetimes -- load-bearing for a UTC-only system
+    "E",    # pycodestyle errors
+    "ERA",  # commented-out code
+    "F",    # pyflakes
+    "I",    # import sorting
+    "ICN",  # import conventions
+    "ISC",  # implicit string concatenation
+    "N",    # pep8 naming
+    "PERF", # performance antipatterns
+    "PIE",  # misc lints
+    "PL",   # pylint
+    "PT",   # pytest style
+    "PTH",  # prefer pathlib
+    "RET",  # return simplification
+    "RSE",  # raise style
+    "RUF",  # ruff-specific
+    "S",    # bandit security
+    "SIM",  # simplification
+    "T20",  # print statements
+    "TID",  # tidy imports
+    "UP",   # pyupgrade
+    "W",    # pycodestyle warnings
+]
+ignore = [
+    # ISC001 is reported by the linter and re-introduced by the formatter; the
+    # formatter is authoritative for string layout.
+    "ISC001",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# S101: pytest expresses assertions with `assert`.
+# PLR2004: an expected value written inline is clearer in a test than a
+#   named constant defined once and used once.
+# D: test names and bodies are the documentation; docstring rules add noise
+#   without adding information.
+"tests/**/*.py" = ["S101", "PLR2004", "D"]
+# T201: the boundary checker's printed output is its user interface. It is a
+#   command-line tool, not library code.
+"scripts/*.py" = ["T201"]
+# A005: the module name `logging` is fixed by the approved Stage 00 tree. Python 3
+#   resolves `import logging` inside it to the standard library because absolute
+#   imports are the default, so the shadowing is nominal rather than real.
+"src/qcf/core/logging.py" = ["A005"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+# ---------------------------------------------------------------------------
+# mypy — strict for src/qcf
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+mypy_path = ["src"]
+explicit_package_bases = true
+namespace_packages = true
+strict = true
+warn_unreachable = true
+show_error_codes = true
+pretty = true
+# Missing imports are never hidden globally. Any exception must name the module
+# and the demonstrated tooling limitation that justifies it.
+ignore_missing_imports = false
+
+# ---------------------------------------------------------------------------
+# pytest and coverage
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config --cov --cov-report=term-missing"
+markers = [
+    "boundary: asserts a non-negotiable project boundary (no live mode, no broker SDK, no tracked market data)",
+]
+# Warnings are escalated deliberately rather than hidden. A warning that must be
+# tolerated is listed here individually with a reason.
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+branch = true
+source = ["src/qcf", "scripts"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
