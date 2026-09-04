@@ -1,7 +1,8 @@
 # Stage 00 implementation report
 
-**Recommendation: PASS**, subject to independent adversarial review and to the
-remote CI observation recorded below.
+**Recommendation: PASS**, subject to independent adversarial review. Remote CI
+is green on both matrix legs; the observation is recorded below, including the
+run that failed first and why.
 
 | Field | Value |
 | --- | --- |
@@ -10,7 +11,7 @@ remote CI observation recorded below.
 | Starting commit | none — empty repository |
 | Bootstrap commit | `bd2586223b7542ee46924a0c224168777fbccb6e` (`main`) |
 | Working branch | `claude/new-session-19lczd` |
-| Final commit | `PLACEHOLDER_FINAL_SHA` |
+| Validated commit | `e7ce80557580c9d6e3beb691b8871eb9c12467c5` (green on remote CI) |
 | Pull request | [Zeorpo/qcf#1](https://github.com/Zeorpo/qcf/pull/1) (draft) |
 
 ## Observed starting state
@@ -302,8 +303,27 @@ $ uv run --python /usr/bin/python3.13 python scripts/check_project_boundary.py
 11 passed, 0 failed, 0 skipped
 ```
 
-**Run 2** was triggered by the fix commit. Its result is recorded in the final
-reporting update below; until it is green, this stage is not complete.
+**Run 2 — SUCCESS** on `e7ce805`.
+[Run 33837229801](https://github.com/Zeorpo/qcf/actions/runs/33837229801). Both
+matrix legs passed every gate:
+
+```text
+SUCCESS  Quality gates (Python 3.12)      SUCCESS  Quality gates (Python 3.13)
+    success   Check out                       success   Check out
+    success   Install uv and Python 3.12      success   Install uv and Python 3.13
+    success   Verify the lockfile is current  success   Verify the lockfile is current
+    success   Install the locked environment  success   Install the locked environment
+    success   Formatting                      success   Formatting
+    success   Lint                            success   Lint
+    success   Types                           success   Types
+    success   Tests and branch coverage       success   Tests and branch coverage
+    success   Project boundary                success   Project boundary
+    success   Secret scan                     success   Secret scan
+```
+
+This is the observed remote result, reported separately from the local runs
+above. One commit follows `e7ce805` on this branch: the report-only update that
+records these figures. It changes no code, no test, and no configuration.
 
 Actions are pinned to immutable commit SHAs resolved from the upstream
 repositories with `git ls-remote`, not from memory:
@@ -370,7 +390,8 @@ Both are the owner's to supply.
 ## Recommendation
 
 **PASS** for Stage 00, conditional on the independent adversarial review
-recording no unresolved blockers, and on the remote CI run completing green.
+recording no unresolved blockers. Remote CI is green on `e7ce805`; the only
+later commit is this report update, which touches no code.
 
 Next permitted stage: **Stage 01 — Governance and Versioned Policy Contracts**.
 Do not begin it before that review.

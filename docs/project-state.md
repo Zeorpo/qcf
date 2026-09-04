@@ -6,7 +6,9 @@ actually done and observed is in the stage reports under `../reports/stages/`.
 ## Current stage
 
 **Stage 00 — Professional Repository Foundation.** Implemented, validated
-locally, and awaiting independent adversarial review.
+locally and on remote CI (Python 3.12 and 3.13, all gates green), and awaiting
+independent adversarial review in
+[Zeorpo/qcf#1](https://github.com/Zeorpo/qcf/pull/1).
 
 ## Starting state
 
