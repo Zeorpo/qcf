@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege. No job needs to write to the repository, and no job receives
+# a secret of any kind. QCF has no financial credentials to expose, and CI must
+# not become the first place one could be introduced.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Never reach for an interpreter that is not on the runner; a silent download
+  # would defeat the point of pinning the version.
+  UV_PYTHON_DOWNLOADS: never
+
+jobs:
+  quality:
+    name: Quality gates (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is the declared floor; 3.13 is the newest available. Running both
+        # ends means a regression at either surfaces here rather than later.
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      # Actions are pinned to immutable commit SHAs, with the tag recorded for
+      # readability. A moving tag is a supply-chain dependency on whoever can
+      # move it.
+      - name: Check out
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Verify the lockfile is current
+        run: uv lock --check
+
+      - name: Install the locked environment
+        run: uv sync --all-groups --frozen --python ${{ matrix.python-version }}
+
+      - name: Formatting
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Types
+        run: uv run mypy src tests scripts
+
+      - name: Tests and branch coverage
+        run: uv run pytest
+
+      - name: Project boundary
+        run: uv run python scripts/check_project_boundary.py
+
+      - name: Secret scan
+        # The hook form verifies tracked files against the reviewed baseline and
+        # exits non-zero on a new finding, without rewriting the baseline the way
+        # `scan --baseline` would.
+        run: uv run detect-secrets-hook --baseline .secrets.baseline $(git ls-files)
+
+# No artefacts are uploaded. Coverage reports and logs can carry file paths and
+# configuration; market data must never leave a machine at all. If an artefact
+# is ever needed, its contents get reviewed before the upload step is added.
