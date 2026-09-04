@@ -1,0 +1,48 @@
+# QCF base configuration — example
+#
+# Copy to a file of your own and edit. Nothing here is secret, and nothing here
+# may become secret: this file is committed, and credentials never are.
+#
+# Every value can be overridden by a QCF_-prefixed environment variable, which
+# takes precedence over this file. Explicit keyword arguments to
+# AppConfig.load() take precedence over both.
+#
+# Unknown keys are rejected. A misspelled setting fails loudly rather than being
+# silently ignored, because a limit that was configured and never read is worse
+# than one that was never configured.
+
+# Identifier used in logs and run records.
+app_name: qcf
+
+# Free-form label for this machine or context. Carries no behaviour.
+environment: local
+
+# Permitted values: DISABLED, RESEARCH, BACKTEST, REPLAY, PAPER.
+# There is no LIVE mode. DISABLED is the default and the safe choice.
+mode: DISABLED
+
+# DEBUG, INFO, WARNING, ERROR, or CRITICAL.
+log_level: INFO
+
+# "console" for humans, "json" for machines.
+log_format: console
+
+# Root that relative paths below resolve against. When unset, they resolve
+# against the working directory. Set it to make a run independent of where it
+# was started from.
+# base_path: /absolute/path/to/checkout
+
+data_root: data
+report_root: reports
+
+# Fixed. QCF holds every internal timestamp in UTC; conversion to
+# America/New_York or America/Chicago is a presentation and policy concern.
+timezone: UTC
+
+# Seed for deterministic runs.
+random_seed: 0
+
+# Label of the external policy set in force. UNKNOWN is the correct value until
+# a policy set has been retrieved, reviewed, and versioned — which is Stage 01
+# work. It is not a placeholder to be filled in with a guess.
+policy_version: UNKNOWN
