@@ -10,8 +10,8 @@ remote CI observation recorded below.
 | Starting commit | none — empty repository |
 | Bootstrap commit | `bd2586223b7542ee46924a0c224168777fbccb6e` (`main`) |
 | Working branch | `claude/new-session-19lczd` |
-| Final commit | recorded in the final reporting update below |
-| Pull request | recorded in the final reporting update below |
+| Final commit | `PLACEHOLDER_FINAL_SHA` |
+| Pull request | [Zeorpo/qcf#1](https://github.com/Zeorpo/qcf/pull/1) (draft) |
 
 ## Observed starting state
 
@@ -240,17 +240,70 @@ was reached.
    an inline `api_key` placeholder. Both rounds were inspected and resolved by
    placing the marker on the correct line; nothing was added to the baseline,
    which still contains zero findings.
-5. **Coverage, first full run.** 97.26%, with four uncovered spots. One was
+5. **Remote CI, first run.** Failed on both matrix legs, before any gate ran,
+   because of a self-inflicted environment guard in the workflow this pull
+   request added. Diagnosed from the job log, fixed at the root, and both legs
+   reproduced locally before re-pushing. Detailed above.
+6. **Coverage, first full run.** 97.26%, with four uncovered spots. One was
    genuinely dead code and was deleted; three were untested public API
    (`get_field_value`, `clear_run_context`, and the `PackageNotFoundError`
    fallback) and received tests. Result 98.40%.
 
 ## Remote CI status
 
-**NOT YET OBSERVED** at the time of writing. `.github/workflows/ci.yml` is
-committed but no workflow run has completed, so no claim is made about it. It is
-recorded here separately from the local results, and is updated in the final
-reporting update below.
+GitHub Actions **is** enabled on this private repository, which the Stage 00
+inspection had listed as unverified.
+
+**Run 1 — FAILURE**, and the fault was this pull request's own.
+[Run 33837051171](https://github.com/Zeorpo/qcf/actions/runs/33837051171). Both
+matrix legs failed at the same step, `Set up Python`, before any gate ran:
+
+```text
+Run uv python install 3.12
+env:
+  UV_PYTHON_DOWNLOADS: never
+Python downloads are not allowed (`python-downloads = "never"`).
+Change to `python-downloads = "manual"` to allow explicit installs.
+##[error]Process completed with exit code 1.
+```
+
+Root cause: the workflow set `UV_PYTHON_DOWNLOADS: never` at job level, intending
+to stop a silent download of an unintended interpreter, and then asked `uv` to
+install the matrix interpreter. GitHub's `ubuntu-24.04` runner does not carry a
+uv-managed 3.12 or 3.13 build, so the guard blocked exactly the install it was
+meant to protect. The reasoning behind the guard was wrong as well as its
+placement: what makes the interpreter trustworthy is that the matrix pins it
+explicitly, not that it was already present on the runner.
+
+Fix: drop the environment guard, and let `astral-sh/setup-uv` provision the
+interpreter through its `python-version` input, which exports `UV_PYTHON` for
+the whole job. The input was confirmed against the action's `action.yml` **at
+the pinned SHA** rather than assumed. This also removes a step and keeps the
+version declared in one place.
+
+Before pushing the fix, both matrix legs were reproduced locally against the
+real interpreters rather than only the 3.12 development environment:
+
+```text
+$ uv lock --check
+Resolved 42 packages in 2ms
+
+$ uv sync --all-groups --frozen --python /usr/bin/python3.13
+$ uv run --python /usr/bin/python3.13 python -c "import sys; print(sys.version.split()[0])"
+3.13.12
+$ uv run --python /usr/bin/python3.13 ruff check .
+All checks passed!
+$ uv run --python /usr/bin/python3.13 mypy src tests scripts
+Success: no issues found in 22 source files
+$ uv run --python /usr/bin/python3.13 pytest
+305 passed
+Required test coverage of 90.0% reached. Total coverage: 98.40%
+$ uv run --python /usr/bin/python3.13 python scripts/check_project_boundary.py
+11 passed, 0 failed, 0 skipped
+```
+
+**Run 2** was triggered by the fix commit. Its result is recorded in the final
+reporting update below; until it is green, this stage is not complete.
 
 Actions are pinned to immutable commit SHAs resolved from the upstream
 repositories with `git ls-remote`, not from memory:

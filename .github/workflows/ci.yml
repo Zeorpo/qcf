@@ -15,11 +15,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # Never reach for an interpreter that is not on the runner; a silent download
-  # would defeat the point of pinning the version.
-  UV_PYTHON_DOWNLOADS: never
-
 jobs:
   quality:
     name: Quality gates (Python ${{ matrix.python-version }})
@@ -41,13 +36,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install uv
+      # setup-uv provisions the interpreter and exports UV_PYTHON, so the whole
+      # job runs on the matrix version. Doing it here rather than in a separate
+      # `uv python install` step keeps the version in one place.
+      - name: Install uv and Python ${{ matrix.python-version }}
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
-
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
 
       - name: Verify the lockfile is current
         run: uv lock --check
