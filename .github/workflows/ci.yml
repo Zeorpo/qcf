@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege. No job needs to write to the repository, and no job receives
+# a secret of any kind. QCF has no financial credentials to expose, and CI must
+# not become the first place one could be introduced.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality gates (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is the declared floor; 3.13 is the newest available. Running both
+        # ends means a regression at either surfaces here rather than later.
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      # Actions are pinned to immutable commit SHAs, with the tag recorded for
+      # readability. A moving tag is a supply-chain dependency on whoever can
+      # move it.
+      - name: Check out
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      # setup-uv provisions the interpreter and exports UV_PYTHON, so the whole
+      # job runs on the matrix version. Doing it here rather than in a separate
+      # `uv python install` step keeps the version in one place.
+      - name: Install uv and Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Verify the lockfile is current
+        run: uv lock --check
+
+      - name: Install the locked environment
+        run: uv sync --all-groups --frozen --python ${{ matrix.python-version }}
+
+      - name: Formatting
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Types
+        run: uv run mypy src tests scripts
+
+      - name: Tests and branch coverage
+        run: uv run pytest
+
+      - name: Project boundary
+        # --strict so a check that could not run fails the build rather than
+        # being counted as "not failed".
+        run: uv run python scripts/check_project_boundary.py --strict
+
+      - name: Secret scan
+        # Via the tested runner, never `$(git ls-files)`: unquoted command
+        # substitution word-splits, so a path containing a space reached the
+        # scanner as several non-existent arguments and the step passed having
+        # scanned nothing. The runner enumerates NUL-delimited and passes an
+        # argument array, and reports a tool error (exit 2) distinctly from
+        # findings (exit 1) so an unperformed check cannot look like a clean one.
+        run: uv run python scripts/run_secret_scan.py
+
+# No artefacts are uploaded. Coverage reports and logs can carry file paths and
+# configuration; market data must never leave a machine at all. If an artefact
+# is ever needed, its contents get reviewed before the upload step is added.

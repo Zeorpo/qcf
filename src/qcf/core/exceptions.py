@@ -1,0 +1,147 @@
+"""Exception hierarchy for QCF.
+
+Only exceptions that Stage 00 code actually raises are defined, plus
+:class:`PolicyExpiredError`, which is declared here because policy expiry is a
+fail-closed condition that later stages must not invent a local spelling for.
+
+Exception messages name *what* failed and *where*, never the offending value
+when that value could be a credential. Callers that need to report a value are
+responsible for redacting it first; see :mod:`qcf.core.logging`.
+
+What that guarantee covers, and what it cannot
+----------------------------------------------
+
+QCF prevents configuration **values**, and unknown **key names**, received as
+data -- through explicit mappings, a YAML file, or the environment -- from being
+copied into its public exception text, ``repr``, structured details, or the
+supported structured logging path.
+
+QCF cannot prevent Python from displaying source code the *caller* wrote: a
+traceback prints the caller's own source line, so a literal written directly
+into a call appears there regardless of anything this package does. Nor can it
+prevent a debugger inspecting frame locals under hostile introspection, or text
+a caller independently prints or logs.
+
+The practical consequence: never hard-code a credential or other sensitive value
+as a literal. Supply it as data, where the guarantee applies.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from typing import ClassVar
+
+__all__ = [
+    "BoundaryViolationError",
+    "ConfigurationError",
+    "InvariantViolationError",
+    "PolicyExpiredError",
+    "QCFError",
+    "UnknownValueError",
+]
+
+
+class QCFError(Exception):
+    """Base class for every error QCF raises deliberately.
+
+    Catching :class:`QCFError` catches conditions QCF detected and chose to
+    signal. It does not catch programming errors from the standard library or
+    third-party code, which should surface unmodified.
+
+    Attributes:
+        code: A stable, non-sensitive identifier for the *kind* of failure.
+            Logging emits this instead of the exception message on the safe
+            path, so that an operator can classify a failure without the log
+            carrying whatever text the failure happened to contain. It is part
+            of the interface: change it only deliberately.
+    """
+
+    code: ClassVar[str] = "QCF_ERROR"
+
+
+class ConfigurationError(QCFError):
+    """Configuration is missing, malformed, or internally inconsistent.
+
+    Raised in preference to falling back to a default, because a silently
+    defaulted financial setting is the failure mode this project is built to
+    avoid.
+    """
+
+    code: ClassVar[str] = "QCF_CONFIG_INVALID"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: Sequence[Mapping[str, object]] = (),
+        reason: str | None = None,
+    ) -> None:
+        """Store a message and optional pre-sanitised structured details.
+
+        Args:
+            message: Human-readable summary. Callers are responsible for
+                ensuring it carries no input value; see
+                :func:`qcf.core.config.safe_validation_details`.
+            details: Structured error entries that have **already** been
+                sanitised. Nothing is sanitised here — this class stores what it
+                is given, so the guarantee lives at the one boundary that builds
+                them rather than being re-implemented per call site.
+            reason: A stable, code-owned identifier for the specific failure,
+                narrower than :attr:`code`. It is chosen from a fixed set of
+                literals in the raising module and never derived from input, so
+                it is always safe to log and to branch on. ``None`` when the
+                failure has no more specific classification than :attr:`code`.
+
+        Note:
+            No third-party exception object is stored. Retaining one would put
+            its ``str()`` — which carries the rejected input — back inside a
+            public attribute, which is exactly what this class exists to avoid.
+        """
+        super().__init__(message)
+        self.details: tuple[Mapping[str, object], ...] = tuple(details)
+        self.reason: str | None = reason
+
+
+class UnknownValueError(QCFError):
+    """An UNKNOWN value was used where a known value is required.
+
+    Raised when code attempts to coerce, compare, or compute with
+    :data:`qcf.core.unknown.UNKNOWN`. The correct response is to establish the
+    value from an authoritative source, or to block the dependent claim -- never
+    to substitute zero, ``None``, an empty string, or NaN.
+    """
+
+    code: ClassVar[str] = "QCF_VALUE_UNKNOWN"
+
+
+class BoundaryViolationError(QCFError):
+    """A non-negotiable project boundary was violated.
+
+    Boundaries include the absence of a live operating mode, the absence of
+    broker connectivity, and the prohibition on tracking market data. This error
+    signals a defect in QCF itself rather than bad input.
+    """
+
+    code: ClassVar[str] = "QCF_BOUNDARY_VIOLATION"
+
+
+class InvariantViolationError(QCFError):
+    """An invariant that the system relies upon does not hold.
+
+    Raised where continuing would produce results that cannot be trusted. It is
+    always preferable to fail here than to record a number whose meaning is
+    unknown.
+    """
+
+    code: ClassVar[str] = "QCF_INVARIANT_VIOLATION"
+
+
+class PolicyExpiredError(QCFError):
+    """A versioned external policy is expired, missing, or unreviewed.
+
+    Declared in Stage 00 for use by later policy validation. A policy whose age
+    or provenance cannot be established blocks new simulated exposure; it does
+    not fall back to the last known version.
+    """
+
+    code: ClassVar[str] = "QCF_POLICY_EXPIRED"
