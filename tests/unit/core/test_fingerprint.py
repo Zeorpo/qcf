@@ -12,11 +12,16 @@ import pytest
 
 from qcf.core.enums import OperatingMode
 from qcf.core.fingerprint import (
+    CANONICAL_FORMAT_VERSION,
+    ESCAPE_PREFIX,
+    RESERVED_PREFIX,
     TAG_KEY,
     canonical_json,
     canonicalize,
+    escape_key,
     fingerprint,
     fingerprint_file,
+    unescape_key,
 )
 from qcf.core.unknown import UNKNOWN
 
@@ -154,25 +159,103 @@ def test_canonical_json_preserves_non_ascii() -> None:
     assert canonical_json({"k": "é"}) == '{"k":"é"}'
 
 
-def test_an_envelope_shaped_mapping_round_trips() -> None:
-    """Canonicalisation must be idempotent, so envelopes survive a second pass."""
-    once = canonicalize(Decimal("1.5"))
-    assert canonicalize(once) == once
+# --------------------------------------------------------------------------
+# Input contract (ADR-0008).
+#
+# These replace four tests that asserted the superseded pass-through contract:
+#   - test_an_envelope_shaped_mapping_round_trips  (asserted idempotence, the
+#     very behaviour that made a lookalike mapping indistinguishable from the
+#     typed value);
+#   - test_a_forged_envelope_tag_is_rejected,
+#     test_a_malformed_envelope_is_rejected,
+#     test_an_envelope_with_a_non_string_payload_is_rejected  (asserted
+#     validation of incoming envelopes, which no longer exist as input:
+#     mappings are now always encoded as mappings, so there is nothing to
+#     validate and nothing to reject).
+# The replacements below assert the distinction that pass-through destroyed.
+# --------------------------------------------------------------------------
 
 
-def test_a_forged_envelope_tag_is_rejected() -> None:
-    with pytest.raises(TypeError, match="not a recognised tag"):
-        canonicalize({TAG_KEY: "fabricated", "value": "x"})
+def test_a_lookalike_mapping_does_not_collide_with_the_typed_value() -> None:
+    """The defect ADR-0008 fixes: these two produced identical bytes."""
+    typed = Decimal("1.25")
+    lookalike = {TAG_KEY: "decimal", "value": "1.25"}
+    assert canonical_json(typed) != canonical_json(lookalike)
+    assert fingerprint(typed) != fingerprint(lookalike)
 
 
-def test_a_malformed_envelope_is_rejected() -> None:
-    with pytest.raises(TypeError, match="malformed canonical envelope"):
-        canonicalize({TAG_KEY: "decimal"})
+@pytest.mark.parametrize(
+    ("typed", "lookalike"),
+    [
+        pytest.param(Decimal("1"), {TAG_KEY: "decimal", "value": "1"}, id="decimal"),
+        pytest.param(date(2026, 9, 4), {TAG_KEY: "date", "value": "2026-09-04"}, id="date"),
+        pytest.param(
+            datetime(2026, 9, 4, tzinfo=UTC),
+            {TAG_KEY: "datetime", "value": "2026-09-04T00:00:00Z"},
+            id="datetime",
+        ),
+        pytest.param(PurePosixPath("a/b"), {TAG_KEY: "path", "value": "a/b"}, id="path"),
+        pytest.param(UUID(int=1), {TAG_KEY: "uuid", "value": str(UUID(int=1))}, id="uuid"),
+        pytest.param(UNKNOWN, {TAG_KEY: "unknown"}, id="unknown"),
+    ],
+)
+def test_no_recognised_tag_can_be_imitated(typed: object, lookalike: object) -> None:
+    assert canonical_json(typed) != canonical_json(lookalike)
 
 
-def test_an_envelope_with_a_non_string_payload_is_rejected() -> None:
-    with pytest.raises(TypeError, match="requires a string"):
-        canonicalize({TAG_KEY: "decimal", "value": 1})
+def test_lookalikes_are_distinct_when_nested() -> None:
+    """Escaping applies at every depth, not only at the top level."""
+    typed = {"outer": [{"inner": Decimal("2")}]}
+    lookalike = {"outer": [{"inner": {TAG_KEY: "decimal", "value": "2"}}]}
+    assert canonical_json(typed) != canonical_json(lookalike)
+
+
+def test_unknown_is_distinct_from_both_its_lookalikes() -> None:
+    assert fingerprint(UNKNOWN) != fingerprint("UNKNOWN")
+    assert fingerprint(UNKNOWN) != fingerprint({TAG_KEY: "unknown"})
+    assert fingerprint("UNKNOWN") != fingerprint({TAG_KEY: "unknown"})
+
+
+def test_reserved_keys_are_escaped_in_the_encoding() -> None:
+    encoded = canonicalize({TAG_KEY: "decimal", "value": "1"})
+    assert encoded == {f"{ESCAPE_PREFIX}{TAG_KEY}": "decimal", "value": "1"}
+
+
+@pytest.mark.parametrize(
+    "key", ["plain", TAG_KEY, RESERVED_PREFIX, f"{ESCAPE_PREFIX}{TAG_KEY}", "__qcf_"]
+)
+def test_key_escaping_is_invertible(key: str) -> None:
+    """Injectivity is what makes an envelope unforgeable, so it is asserted."""
+    assert unescape_key(escape_key(key)) == key
+
+
+def test_escaping_distinguishes_keys_that_would_otherwise_merge() -> None:
+    """A raw key that already looks escaped must not collide with a real one."""
+    first = canonical_json({TAG_KEY: "x"})
+    second = canonical_json({f"{ESCAPE_PREFIX}{TAG_KEY}": "x"})
+    assert first != second
+
+
+def test_escaping_never_merges_two_distinct_keys() -> None:
+    """Injectivity is what makes a collision impossible, so assert the outcome.
+
+    A mapping holding both a reserved key and its already-escaped spelling must
+    still encode to two distinct keys. No runtime guard exists for this because
+    none can fire: escape_key is injective.
+    """
+    encoded = canonicalize({TAG_KEY: "a", f"{ESCAPE_PREFIX}{TAG_KEY}": "b"})
+    assert isinstance(encoded, dict)
+    assert len(encoded) == 2
+    assert set(encoded.values()) == {"a", "b"}
+
+
+def test_ordinary_mappings_are_unaffected_by_escaping() -> None:
+    assert canonicalize({"a": 1, "b": {"c": 2}}) == {"a": 1, "b": {"c": 2}}
+
+
+def test_the_canonical_format_version_is_recorded() -> None:
+    """A representation change must be visible, not inferred from behaviour."""
+    assert CANONICAL_FORMAT_VERSION == 2
 
 
 def test_fingerprint_is_a_sha256_hex_digest() -> None:

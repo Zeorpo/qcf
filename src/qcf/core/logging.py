@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging as stdlib_logging
 import re
+import sys
 from collections.abc import Mapping, MutableMapping, Sequence
 from typing import Any, Final, Literal, TextIO
 
@@ -29,6 +30,7 @@ import structlog
 __all__ = [
     "REDACTED",
     "SENSITIVE_KEY_TERMS",
+    "ExceptionOutput",
     "bind_run_context",
     "clear_run_context",
     "configure_logging",
@@ -62,6 +64,14 @@ SENSITIVE_KEY_TERMS: Final[frozenset[str]] = frozenset(
 _NON_ALNUM: Final = re.compile(r"[^a-z0-9]+")
 
 LogFormat = Literal["console", "json"]
+
+#: How much of an exception reaches the log.
+#:
+#: ``"safe"`` (the default) emits the exception's type and, for a
+#: :class:`~qcf.core.exceptions.QCFError`, its stable ``code`` -- and nothing
+#: else. ``"full"`` emits the formatted traceback, which is useful in local
+#: development and is **not** safe for text that may contain a secret.
+ExceptionOutput = Literal["safe", "full"]
 
 
 def _normalise_key(key: str) -> str:
@@ -126,13 +136,59 @@ def _redaction_processor(
     return redacted
 
 
-def configure_logging(
+def _extract_exception(event_dict: MutableMapping[str, Any]) -> BaseException | None:
+    """Pull the exception out of an event, whichever way it was supplied."""
+    exc_info = event_dict.pop("exc_info", None)
+    if exc_info is None or exc_info is False:
+        return None
+    if isinstance(exc_info, BaseException):
+        return exc_info
+    if isinstance(exc_info, tuple):
+        return exc_info[1] if len(exc_info) > 1 else None
+    return sys.exc_info()[1]
+
+
+def _safe_exception_processor(
+    logger: object,
+    method_name: str,
+    event_dict: MutableMapping[str, Any],
+) -> Mapping[str, Any]:
+    """Replace exception text with controlled metadata.
+
+    ``logger`` and ``method_name`` are unused; the signature is fixed by
+    structlog's processor protocol.
+
+    Key-based redaction cannot help here: a traceback is a single string under a
+    key that is not sensitive by name, so no key rule would ever inspect it, at
+    any position in the processor chain. The only reliable fix is not to emit
+    the text.
+
+    Emits ``error_type`` always, and ``error_code`` when the exception is a
+    :class:`~qcf.core.exceptions.QCFError`. Chained causes contribute nothing:
+    only the outermost type and code are recorded, so a suppressed message
+    cannot reappear as an underlying exception.
+    """
+    del logger, method_name
+    exception = _extract_exception(event_dict)
+    # Drop any traceback another processor may already have rendered.
+    event_dict.pop("exception", None)
+    event_dict.pop("exc_info_", None)
+    if exception is not None:
+        event_dict["error_type"] = type(exception).__name__
+        code = getattr(type(exception), "code", None)
+        if isinstance(code, str):
+            event_dict["error_code"] = code
+    return event_dict
+
+
+def configure_logging(  # noqa: PLR0913 - keyword-only knobs, each independent
     *,
     level: str = "INFO",
     fmt: LogFormat = "console",
     stream: TextIO | None = None,
     version: str | None = None,
     mode: str | None = None,
+    exception_output: ExceptionOutput = "safe",
 ) -> None:
     """Configure structlog for this process.
 
@@ -146,6 +202,9 @@ def configure_logging(
         stream: Destination stream. Defaults to standard output.
         version: Application version to bind into the run context.
         mode: Operating mode to bind into the run context.
+        exception_output: ``"safe"`` (default) emits only an exception's type
+            and code; ``"full"`` emits the formatted traceback and must not be
+            used where messages may carry sensitive text.
 
     Raises:
         ValueError: If ``level`` is not a known level name.
@@ -163,14 +222,22 @@ def configure_logging(
         else structlog.dev.ConsoleRenderer(colors=False)
     )
 
+    exception_processors: list[structlog.typing.Processor] = (
+        [_safe_exception_processor]
+        if exception_output == "safe"
+        else [structlog.processors.StackInfoRenderer(), structlog.processors.format_exc_info]
+    )
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso", utc=True),
+            *exception_processors,
+            # Redaction runs last so it also covers anything the exception
+            # processors added. Note that it is key-based: see the module
+            # docstring for what that does and does not guarantee.
             _redaction_processor,
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
             renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(level_map[key]),

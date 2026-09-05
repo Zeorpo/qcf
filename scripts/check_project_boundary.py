@@ -25,12 +25,18 @@ from __future__ import annotations
 import ast
 import importlib
 import re
-import subprocess
 import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Literal
+
+# Runnable as a script and importable as `scripts.check_project_boundary`.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from scripts.repo_files import RepoFileError, enumerate_project_files, run_git  # noqa: E402
 
 Status = Literal["PASS", "FAIL", "SKIP"]
 
@@ -140,6 +146,33 @@ ALLOWED_DATA_FILES: Final[frozenset[str]] = frozenset(
 #: Lines carrying this marker may mention the incorrect product code `E6`,
 #: because saying which spelling is wrong requires writing it once.
 E6_ALLOW_MARKER: Final = "qcf:allow-E6"
+
+#: Marker exempting a line from the build-claim check, for text that must quote a
+#: retired phrase in order to say it was wrong.
+BUILD_CLAIM_ALLOW_MARKER: Final = "qcf:allow-build-claim"
+
+#: Absolute claims about dependency resolution that were verified false.
+#:
+#: Finding R-10: `uv sync --frozen` builds QCF's own package in an isolated
+#: PEP 517 environment and resolves `[build-system].requires` plus their
+#: transitive dependencies outside `uv.lock` -- seven packages on a clean cache.
+#: `--frozen` stops uv updating the project lock; it does not make the install
+#: offline or put every input in the lock.
+#:
+#: This is a deliberately short, literal list. It catches the exact sentences
+#: that were wrong and their closest rewordings; it cannot judge prose in
+#: general, and it is not a substitute for reading ADR-0006 before writing about
+#: reproducibility. A sentence that is false in some new way will pass.
+FALSE_BUILD_CLAIMS: Final = (
+    "resolves nothing at build time",
+    "nothing is resolved at build time",
+    "nothing is resolved at install time",
+    "resolves nothing at install time",
+    "byte-identical environment",
+    "byte-identical build",
+    "hermetic install",
+    "fully offline install",
+)
 _E6_TOKEN: Final = re.compile(r"\bE6\b")
 
 _MARKDOWN_LINK: Final = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
@@ -149,9 +182,13 @@ _MARKDOWN_LINK: Final = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 #: is a violation itself.
 SELF_AND_TESTS: Final[tuple[str, ...]] = ("scripts/check_project_boundary.py", "tests/")
 
-_SKIPPED_DIRECTORIES: Final[frozenset[str]] = frozenset(
-    {".git", ".venv", "__pycache__", ".mypy_cache", ".ruff_cache", ".pytest_cache", "htmlcov"}
-)
+# Scan scope is defined by scripts/repo_files.py: git's view of the working
+# tree (tracked plus untracked-not-ignored), or a pruned filesystem walk outside
+# a checkout. Replacing an ad-hoc directory skip-list with that enumeration
+# fixed two defects at once -- a virtual environment not literally named
+# `.venv` was previously traversed (1558 of 1580 scanned files were
+# third-party), and the skip branch's coverage depended on whether a cache
+# directory happened to exist from an earlier run.
 
 
 @dataclass(frozen=True)
@@ -164,11 +201,15 @@ class CheckResult:
 
 
 def _walk(root: Path, suffix: str) -> Iterator[Path]:
-    """Yield files under ``root`` with ``suffix``, skipping generated trees."""
-    for path in sorted(root.rglob(f"*{suffix}")):
-        if any(part in _SKIPPED_DIRECTORIES for part in path.relative_to(root).parts):
-            continue
-        if path.is_file():
+    """Yield project-owned files under ``root`` with ``suffix``.
+
+    Raises:
+        RepoFileError: If the file list cannot be established. Propagated
+            deliberately: a check that cannot see the files must not report a
+            clean result.
+    """
+    for path in enumerate_project_files(root):
+        if path.suffix == suffix:
             yield path
 
 
@@ -206,24 +247,17 @@ def _matches_forbidden(module: str, forbidden: Iterable[str]) -> str | None:
 
 
 def _git_tracked_files(root: Path) -> list[str] | None:
-    """Return tracked paths, or ``None`` when git metadata is unavailable."""
+    """Return tracked paths, or ``None`` when there is no checkout.
+
+    NUL-delimited so a path containing a space, tab or newline survives intact.
+    """
     if not (root / ".git").exists():
         return None
     try:
-        # A fixed argument list, no shell, no network: this reads local git
-        # metadata only.
-        completed = subprocess.run(  # noqa: S603
-            ["git", "-C", str(root), "ls-files"],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-    except (OSError, subprocess.SubprocessError):
+        raw = run_git(root, ["ls-files", "-z"])
+    except RepoFileError:
         return None
-    if completed.returncode != 0:
-        return None
-    return [line for line in completed.stdout.splitlines() if line]
+    return [name for name in raw.split("\0") if name]
 
 
 # --------------------------------------------------------------------------
@@ -266,6 +300,13 @@ def check_no_live_mode(root: Path) -> CheckResult:
 
 def check_no_forbidden_imports(root: Path) -> CheckResult:
     """Assert that no module imports a broker, exchange, or market-data client."""
+    try:
+        # Enumeration failure is a failed check, never a clean one.
+        _ = list(_walk(root, ".md"))
+    except RepoFileError as exc:
+        return CheckResult(
+            "no broker or network client imports", "FAIL", (f"cannot enumerate files: {exc}",)
+        )
     problems: list[str] = []
     for path in _walk(root, ".py"):
         relative = path.relative_to(root).as_posix()
@@ -426,6 +467,11 @@ def check_product_code_terminology(root: Path) -> CheckResult:
     Lines carrying the documented marker are exempt, because stating which
     spelling is wrong requires writing the wrong one exactly once.
     """
+    try:
+        # Enumeration failure is a failed check, never a clean one.
+        _ = list(_walk(root, ".md"))
+    except RepoFileError as exc:
+        return CheckResult("product code terminology", "FAIL", (f"cannot enumerate files: {exc}",))
     problems: list[str] = []
     readme = root / "README.md"
     if readme.is_file() and "6E" not in readme.read_text(encoding="utf-8"):
@@ -449,8 +495,72 @@ def check_product_code_terminology(root: Path) -> CheckResult:
     return CheckResult("product code terminology", "PASS")
 
 
+def check_build_reproducibility_claims(root: Path) -> CheckResult:
+    """Assert no document repeats a build-resolution claim shown to be false.
+
+    Finding R-10 was a security document stating that CI "resolves nothing at
+    build time" while `uv sync --frozen` resolved seven build requirements from
+    the index. The claim was corrected; this stops that exact class of sentence
+    coming back, and requires the documents that discuss the boundary to point
+    at where it is actually described.
+
+    What this check is not: prose verification. It matches a short literal list,
+    so replacing one false sentence with a differently false one passes. The
+    real control is ADR-0006 and reading it before writing about reproducibility.
+    """
+    try:
+        # Enumeration failure is a failed check, never a clean one.
+        _ = list(_walk(root, ".md"))
+    except RepoFileError as exc:
+        return CheckResult(
+            "build reproducibility claims", "FAIL", (f"cannot enumerate files: {exc}",)
+        )
+    problems: list[str] = []
+    for suffix in (".md", ".yaml", ".yml", ".toml"):
+        for path in _walk(root, suffix):
+            relative = path.relative_to(root).as_posix()
+            if _is_self_or_test(relative):
+                continue
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+            ):
+                if BUILD_CLAIM_ALLOW_MARKER in line:
+                    continue
+                lowered = line.lower()
+                problems.extend(
+                    f"{relative}:{number} repeats a claim finding R-10 disproved: "
+                    f"{claim!r}. See docs/architecture/decisions/0006-reproducible-locking.md"
+                    for claim in FALSE_BUILD_CLAIMS
+                    if claim in lowered
+                )
+    adr = root / "docs" / "architecture" / "decisions" / "0006-reproducible-locking.md"
+    if adr.is_file():
+        text = adr.read_text(encoding="utf-8")
+        if "Not guaranteed now" not in text:
+            problems.append(
+                "ADR-0006 no longer carries the boundary table naming what is not guaranteed"
+            )
+    else:
+        problems.append("ADR-0006 is absent; the build-isolation boundary is undocumented")
+    security = root / "SECURITY.md"
+    if security.is_file() and "0006-reproducible-locking" not in security.read_text(
+        encoding="utf-8"
+    ):
+        problems.append("SECURITY.md does not reference the documented build-isolation boundary")
+    if problems:
+        return CheckResult("build reproducibility claims", "FAIL", tuple(problems))
+    return CheckResult("build reproducibility claims", "PASS")
+
+
 def check_documentation_links(root: Path) -> CheckResult:
     """Assert that relative markdown links resolve to files that exist."""
+    try:
+        # Enumeration failure is a failed check, never a clean one.
+        _ = list(_walk(root, ".md"))
+    except RepoFileError as exc:
+        return CheckResult(
+            "documentation links resolve", "FAIL", (f"cannot enumerate files: {exc}",)
+        )
     problems: list[str] = []
     for path in _walk(root, ".md"):
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -477,6 +587,7 @@ ALL_CHECKS: Final = (
     check_example_config_validates,
     check_internal_timezone_is_utc,
     check_product_code_terminology,
+    check_build_reproducibility_claims,
     check_documentation_links,
 )
 
@@ -487,8 +598,16 @@ def run_all_checks(root: Path) -> list[CheckResult]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the checks and report. Returns zero only if none failed."""
-    args = sys.argv[1:] if argv is None else argv
+    """Run the checks and report.
+
+    Returns zero only if no check failed and, under ``--strict``, none was
+    skipped. CI passes ``--strict`` so that a check which could not run -- git
+    metadata missing, for example -- fails the build instead of quietly not
+    happening.
+    """
+    args = list(sys.argv[1:] if argv is None else argv)
+    strict = "--strict" in args
+    args = [arg for arg in args if arg != "--strict"]
     root = Path(args[0]).resolve() if args else Path(__file__).resolve().parents[1]
 
     print(f"QCF project boundary check — {root}")
@@ -506,6 +625,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     if failed:
         print("\nBOUNDARY CHECK FAILED")
+        return 1
+    if strict and skipped:
+        print("\nBOUNDARY CHECK FAILED: --strict, and these checks did not run:")
+        for result in skipped:
+            print(f"  - {result.name}")
         return 1
     print("\nBoundary check passed.")
     return 0

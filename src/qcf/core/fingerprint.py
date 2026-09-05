@@ -10,7 +10,8 @@ Guaranteed properties, each asserted by the test-suite:
 * mapping key order does not change a fingerprint;
 * changing any supported value does change it;
 * sequence order is significant, because a list is not a set;
-* canonicalisation is idempotent, so already-canonical structures round-trip;
+* a mapping is always encoded as a mapping, even when its keys imitate an
+  envelope, so a typed value and a lookalike dictionary never collide;
 * :data:`~qcf.core.unknown.UNKNOWN` has a stable canonical form that no ordinary
   string can collide with;
 * unsupported input types raise rather than being coerced to ``str``.
@@ -18,6 +19,14 @@ Guaranteed properties, each asserted by the test-suite:
 The last point is the reason this module is stricter than ``json.dumps``. A
 fingerprint that silently accepts an unexpected type by stringifying it will
 happily report that two different objects are identical.
+
+Input contract
+    :func:`canonicalize` takes **raw values**, never its own output. Feeding a
+    canonical structure back in escapes it, because that structure is a mapping
+    and mappings encode as mappings. An earlier version passed
+    envelope-shaped mappings through unchanged to make canonicalisation
+    idempotent, which made a lookalike dictionary indistinguishable from the
+    typed value it imitated. See ADR-0008.
 
 Canonical forms
     ``Decimal`` becomes its exact ``str`` form, so ``Decimal("1.10")`` and
@@ -55,17 +64,32 @@ __all__ = [
 #: Key marking a canonical envelope for a type JSON cannot represent directly.
 TAG_KEY: Final = "__qcf_type__"
 
+#: Version of the canonical encoding. Bumped by ADR-0008.
+CANONICAL_FORMAT_VERSION: Final = 2
+
+#: Prefix reserved for this module's own structural keys.
+RESERVED_PREFIX: Final = "__qcf_"
+
+#: Marker inserted to escape a raw key that would otherwise use the prefix.
+ESCAPE_PREFIX: Final = "__qcf_esc_"
+
 _CHUNK_SIZE: Final = 1 << 20
 
-# Envelope tag -> the keys that envelope must carry, beyond TAG_KEY itself.
-_ENVELOPE_SHAPES: Final[dict[str, frozenset[str]]] = {
-    "unknown": frozenset(),
-    "decimal": frozenset({"value"}),
-    "date": frozenset({"value"}),
-    "datetime": frozenset({"value"}),
-    "path": frozenset({"value"}),
-    "uuid": frozenset({"value"}),
-}
+
+def escape_key(key: str) -> str:
+    """Escape a raw mapping key so it cannot imitate a canonical envelope.
+
+    Any key using the reserved prefix gains an escape marker. The transform is
+    injective -- removing exactly one :data:`ESCAPE_PREFIX` inverts it -- so a
+    raw mapping can never produce a bare :data:`TAG_KEY`, and an envelope is
+    therefore only ever produced by a typed value.
+    """
+    return f"{ESCAPE_PREFIX}{key}" if key.startswith(RESERVED_PREFIX) else key
+
+
+def unescape_key(key: str) -> str:
+    """Invert :func:`escape_key`."""
+    return key[len(ESCAPE_PREFIX) :] if key.startswith(ESCAPE_PREFIX) else key
 
 
 def _envelope(tag: str, value: str) -> dict[str, str]:
@@ -89,9 +113,7 @@ def _canonical_datetime(value: datetime) -> dict[str, str]:
 
 
 def _canonical_mapping(value: Mapping[object, object]) -> dict[str, object]:
-    """Canonicalise a mapping, passing through already-canonical envelopes."""
-    if TAG_KEY in value:
-        return _validated_envelope(value)
+    """Canonicalise a mapping as ordinary data, escaping reserved keys."""
     result: dict[str, object] = {}
     for key, item in value.items():
         if not isinstance(key, str):
@@ -100,34 +122,11 @@ def _canonical_mapping(value: Mapping[object, object]) -> dict[str, object]:
                 f"{type(key).__name__}. Convert the key explicitly so that the "
                 f"conversion is visible in the record."
             )
-        result[key] = canonicalize(item)
+        # No collision check is needed: escape_key is injective, so distinct
+        # keys stay distinct. That is asserted by the test-suite rather than
+        # guarded by an unreachable branch here.
+        result[escape_key(key)] = canonicalize(item)
     return result
-
-
-def _validated_envelope(value: Mapping[object, object]) -> dict[str, object]:
-    """Validate and return an already-canonical envelope unchanged.
-
-    Canonicalisation must be idempotent, so a structure this module produced has
-    to survive a second pass. Validating the shape here means an ordinary
-    mapping cannot impersonate an envelope and collide with a real value.
-    """
-    tag = value[TAG_KEY]
-    if not isinstance(tag, str) or tag not in _ENVELOPE_SHAPES:
-        raise TypeError(
-            f"{TAG_KEY!r} is reserved for canonical envelopes produced by this "
-            f"module; {tag!r} is not a recognised tag."
-        )
-    expected = _ENVELOPE_SHAPES[tag] | {TAG_KEY}
-    actual = {str(key) for key in value}
-    if actual != expected:
-        raise TypeError(
-            f"malformed canonical envelope for tag {tag!r}: expected keys "
-            f"{sorted(expected)}, got {sorted(actual)}."
-        )
-    for key in _ENVELOPE_SHAPES[tag]:
-        if not isinstance(value[key], str):
-            raise TypeError(f"canonical envelope {tag!r} requires a string {key!r}.")
-    return {str(key): value[key] for key in value}
 
 
 def canonicalize(value: object) -> object:  # noqa: PLR0911, PLR0912 - a flat type dispatch

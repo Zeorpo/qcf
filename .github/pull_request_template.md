@@ -30,8 +30,8 @@ uv run ruff format --check .
 uv run ruff check .
 uv run mypy src tests scripts
 uv run pytest
-uv run python scripts/check_project_boundary.py
-uv run detect-secrets-hook --baseline .secrets.baseline $(git ls-files)
+uv run python scripts/check_project_boundary.py --strict
+uv run python scripts/run_secret_scan.py
 ```
 
 ## Evidence and limitations

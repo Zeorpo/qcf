@@ -50,7 +50,7 @@ repos:
         name: QCF project boundary
         # Fast, deterministic, read-only, and offline: it belongs at commit time,
         # not only in CI, because a boundary caught late has already been pushed.
-        entry: uv run python scripts/check_project_boundary.py
+        entry: uv run python scripts/check_project_boundary.py --strict
         language: system
         pass_filenames: false
         always_run: true

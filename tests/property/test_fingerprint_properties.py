@@ -69,11 +69,25 @@ def test_sequence_order_stays_significant(items: list[object]) -> None:
     assert fingerprint(items) != fingerprint(reversed_items)
 
 
+# Replaces test_canonicalisation_is_idempotent. Blanket idempotence was
+# withdrawn by ADR-0008: canonicalize takes raw values, and feeding its output
+# back in correctly escapes it, because that output is a mapping. Idempotence
+# was never the property that mattered -- determinism and injectivity were, and
+# idempotence was purchased at the cost of injectivity.
 @given(value=_values)
-def test_canonicalisation_is_idempotent(value: object) -> None:
-    """An already-canonical structure must survive a second pass unchanged."""
+def test_encoding_is_stable_under_repeat_encoding(value: object) -> None:
+    """Re-encoding is deterministic, and never silently a no-op on a mapping."""
     once = canonicalize(value)
-    assert canonicalize(once) == once
+    twice = canonicalize(once)
+    assert canonicalize(once) == twice
+
+
+@given(mapping=_mappings)
+def test_no_raw_mapping_can_produce_a_bare_envelope_tag(mapping: dict[str, object]) -> None:
+    """The invariant that makes a typed value unforgeable, over arbitrary input."""
+    encoded = canonicalize({**mapping, TAG_KEY: "decimal", "value": "1"})
+    assert isinstance(encoded, dict)
+    assert TAG_KEY not in encoded
 
 
 @given(value=_values)

@@ -16,6 +16,9 @@ in [`template.md`](template.md).
 | [0005](0005-operating-modes.md) | Permitted operating modes and no LIVE mode | 00 |
 | [0006](0006-reproducible-locking.md) | Committed lockfile and reproducibility | 00 |
 | [0007](0007-branching-and-bootstrap.md) | Branch workflow and the initial-`main` bootstrap exception | 00 |
+| [0008](0008-canonical-input-contract.md) | Raw values and canonical output are separate input contracts | 00-C |
+| [0009](0009-effective-path-context.md) | Configuration records the effective path context | 00-C |
+| [0010](0010-fail-closed-configuration-and-safe-diagnostics.md) | Configuration fails closed on every channel; diagnostics name only declared fields | 00-D |
 
 ## Deliberately deferred
 

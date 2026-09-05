@@ -60,6 +60,32 @@ them. `detect-secrets` covers the value-shaped case at commit and in CI.
 transition, and a system whose correctness depends on session boundaries cannot
 afford an hour that occurs twice.
 
+## What key-based redaction does not cover
+
+Added in correction pass 00-C, because the original record implied more than the
+implementation delivered.
+
+Redaction matches **key names**. It therefore does not inspect, and makes no
+promise about:
+
+- the event message itself, when a caller interpolates a value into free text;
+- exception messages and tracebacks, which arrive as one string under the key
+  `exception` -- not a sensitive name, so no key rule ever looks at its value.
+  Reordering the processors does **not** fix this, which was verified rather
+  than assumed;
+- text inside custom objects rendered by `repr`.
+
+The exception case is now closed by a different mechanism: `configure_logging`
+defaults to `exception_output="safe"`, which emits only the exception's type and
+its stable `QCFError.code` and never the message or traceback. `"full"` restores
+traceback output for local debugging and is documented as unsafe for text that
+may carry a secret.
+
+The remaining free-text case is a real limit, deliberately left open: detecting
+arbitrary secrets in prose by pattern is the approach this ADR rejected, and
+`detect-secrets` covers the value-shaped case at commit and in CI. A test asserts
+the limit so it cannot be quietly overstated.
+
 ## Consequences
 
 Over-redaction is possible: a key such as `token_count` would be redacted. That
@@ -79,6 +105,9 @@ justification recorded in `pyproject.toml`.
 - `tests/unit/core/test_logging.py` asserts a placeholder credential never
   appears in rendered output, in either renderer, whether passed as an event
   field or bound into the run context.
+- The same suite asserts the safe exception contract for plain, chained and
+  configuration errors, in both renderers, and asserts the free-text limit
+  explicitly.
 - The same suite asserts nested and sequence traversal, non-mutation, and that
   reconfiguring does not duplicate output.
 - `tests/property/test_fingerprint_properties.py` asserts non-mutation for

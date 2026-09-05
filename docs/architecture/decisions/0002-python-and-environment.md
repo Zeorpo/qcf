@@ -47,9 +47,13 @@ land unnoticed and surface later as an unexplained environment problem.
 
 ## Consequences
 
-Contributors need `uv`. In exchange, `uv sync --all-groups --frozen` produces a
-byte-identical environment on any machine, which is what makes a run record
-meaningful.
+Contributors need `uv`. In exchange, `uv sync --all-groups --frozen` installs
+the same resolved versions of the locked project and development dependencies on
+any machine, which is what makes a run record meaningful. That is a claim about
+the dependency set the lock represents — not about the isolated build
+environment, which is resolved separately (see
+[ADR-0006](0006-reproducible-locking.md)), and not about build artefacts being
+reproducible byte for byte, which QCF does not claim.
 
 `uv.lock` is committed and must be regenerated when dependencies change; CI
 fails on a stale lock rather than silently resolving something newer.

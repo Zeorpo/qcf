@@ -28,7 +28,7 @@ uv sync --all-groups --frozen
 uv run pre-commit install
 ```
 
-`--frozen` installs exactly what `uv.lock` records and fails if the lock is
+`--frozen` installs the locked dependencies without updating `uv.lock`, and fails if the lock is
 stale, rather than quietly resolving something newer.
 
 ### Windows PowerShell
@@ -50,7 +50,7 @@ rather than whatever is first on `PATH`:
 ```bash
 uv run python -c "import qcf; print(qcf.__version__)"
 uv run pytest
-uv run python scripts/check_project_boundary.py
+uv run python scripts/check_project_boundary.py --strict
 ```
 
 ## Configuration

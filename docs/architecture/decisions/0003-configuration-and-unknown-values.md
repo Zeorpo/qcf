@@ -23,8 +23,20 @@ configuration fingerprint a description of *some* moment rather than of the run.
 ## Decision
 
 Configuration is a frozen Pydantic model. It is validated once, cannot be
-mutated afterwards, and rejects unknown keys (`extra="forbid"`) so that a
-misspelled setting fails loudly instead of being ignored.
+mutated afterwards, and rejects unknown keys on **every** input channel so that
+a misspelled setting fails loudly instead of being ignored.
+
+`extra="forbid"` alone does not achieve that, which finding R-12 established:
+pydantic-settings collects only prefixed environment names that match a declared
+field and discards the rest before the model is constructed, so `QCF_MOED=PAPER`
+loaded successfully with `mode=DISABLED` while the identical typo through YAML or
+a keyword argument was a hard error. Three mechanisms are therefore needed:
+
+- `extra="forbid"` covers keyword arguments and the YAML mapping;
+- `qcf.core.config.check_environment` covers the `QCF_` environment namespace,
+  validating it against the schema before construction;
+- a scoped `SafeLoader` subclass rejects duplicate, merged and non-string YAML
+  keys, so one file cannot state two values for one setting (finding R-13).
 
 Values that have not been established are represented by a dedicated sentinel,
 `qcf.core.unknown.UNKNOWN`, which:

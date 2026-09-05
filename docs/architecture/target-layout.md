@@ -41,7 +41,7 @@ designed or validated. Documenting the target costs nothing and claims nothing.
 | `docs/` | Exists |
 | `notebooks/` | Placeholder only. See [`../../notebooks/README.md`](../../notebooks/README.md) |
 | `reports/` | `stages/` populated; `incidents/` and `research/` are generated output and are ignored |
-| `scripts/` | `check_project_boundary.py` exists |
+| `scripts/` | `check_project_boundary.py`, `run_secret_scan.py`, `repo_files.py` |
 | `tests/` | `unit/`, `integration/`, `property/`, `contract/` populated; `regression/` intentionally empty |
 
 ## Rule

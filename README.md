@@ -107,7 +107,7 @@ data/       Directory skeleton. Contents ignored. No market data, ever.
 docs/       Architecture, ADRs, development guides, stage documents
 notebooks/  Exploratory only; never canonical logic
 reports/    Stage reports; incident and research output (generated, ignored)
-scripts/    check_project_boundary.py
+scripts/    check_project_boundary.py, run_secret_scan.py, repo_files.py
 src/qcf/    The package. core/ only.
 tests/      unit, integration, property, contract, regression
 ```
@@ -152,8 +152,8 @@ uv run ruff format --check .                       # formatting
 uv run ruff check .                                # linting
 uv run mypy src tests scripts                      # strict typing for src/qcf
 uv run pytest                                      # tests, branch coverage, 90% gate
-uv run python scripts/check_project_boundary.py    # project boundaries
-uv run detect-secrets-hook --baseline .secrets.baseline $(git ls-files)
+uv run python scripts/check_project_boundary.py --strict    # project boundaries
+uv run python scripts/run_secret_scan.py
 ```
 
 ---

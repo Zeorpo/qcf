@@ -36,7 +36,16 @@ create somewhere for one to hide.
 - **No financial parameters yet.** No fees, commissions, risk limits, profit
   targets, or strategy parameters. Those belong to the stages that define them
   with provenance and versioning.
-- **Unknown keys are rejected.** Adding a key here without adding the field to
-  the model is a validation error.
+- **Unknown keys are rejected, on every channel.** Adding a key here without
+  adding the field to the model is a validation error, and so is a misspelled
+  `QCF_`-prefixed environment variable or an unknown keyword argument.
+- **A key may not be repeated.** Setting the same key twice in one file is an
+  error at any depth, rather than the last one winning. YAML merge keys (`<<`)
+  and non-string keys are rejected for the same reason.
+- **Environment names are the `QCF_` prefix plus the field name.** No aliases,
+  and no other spelling. This is enforced in code, not merely documented.
+- **Rejections do not quote your file.** An unknown key is untrusted input and
+  may itself be a secret, so errors give a position and a stable code, never the
+  key or the line. Known field names are named in full.
 - **Unknown values stay `UNKNOWN`.** Never substitute `0`, `null`, `""`, or
   `NaN` for a value that has not been established.

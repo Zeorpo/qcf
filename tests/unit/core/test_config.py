@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import traceback
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from qcf.core.config import ENV_PREFIX, AppConfig, _YamlSettingsSource
+from qcf.core.config import (
+    _REDACTED_FIELD,
+    ENV_PREFIX,
+    AppConfig,
+    _YamlSettingsSource,
+)
 from qcf.core.enums import OperatingMode
 from qcf.core.exceptions import ConfigurationError
 from qcf.core.unknown import UNKNOWN, is_unknown
@@ -211,3 +217,230 @@ def test_the_yaml_source_exposes_single_field_lookup(tmp_path: Path) -> None:
 
 def test_a_source_with_no_path_supplies_nothing() -> None:
     assert _YamlSettingsSource(AppConfig, None)() == {}
+
+
+# --------------------------------------------------------------------------
+# Correction B (R-03): diagnostics must not echo input values.
+# The marker below is inert: it is not a credential and stands in for one.
+# --------------------------------------------------------------------------
+
+MARKER = "INERT-MARKER-9Q7"
+
+
+def test_an_invalid_explicit_value_is_not_echoed() -> None:
+    with pytest.raises(ConfigurationError) as caught:
+        AppConfig.load(random_seed=MARKER)
+    assert MARKER not in str(caught.value)
+    assert MARKER not in repr(caught.value)
+    assert MARKER not in repr(caught.value.details)
+
+
+def test_an_invalid_environment_value_is_not_echoed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(f"{ENV_PREFIX}RANDOM_SEED", MARKER)
+    with pytest.raises(ConfigurationError) as caught:
+        AppConfig.load()
+    assert MARKER not in str(caught.value)
+
+
+def test_an_invalid_yaml_value_is_not_echoed(tmp_path: Path) -> None:
+    path = tmp_path / "conf.yaml"
+    path.write_text(f"random_seed: {MARKER}\n", encoding="utf-8")
+    with pytest.raises(ConfigurationError) as caught:
+        AppConfig.load(path)
+    assert MARKER not in str(caught.value)
+
+
+def test_a_sensitive_extra_field_name_is_redacted() -> None:
+    """The extra-field location is an unvalidated key and may itself be secret."""
+    with pytest.raises(ConfigurationError) as caught:
+        AppConfig.load(**{f"api_key_{MARKER}": "x"})
+    assert MARKER not in str(caught.value)
+    # Asserted against the constant rather than a copied literal, so renaming
+    # the placeholder cannot leave this test passing against stale text.
+    assert _REDACTED_FIELD in str(caught.value)
+
+
+def test_an_ordinary_extra_field_name_is_also_replaced() -> None:
+    """An unknown key is untrusted whether or not it looks alarming.
+
+    This assertion is **inverted** from its original form, which required
+    ``maximum_contracts`` to appear in the message on the grounds that
+    "redaction must not make every typo undiagnosable". That reasoning is what
+    finding H-01 disproved: ``maximum_contracts`` is not a declared field, so it
+    is caller-supplied text, and the old test was asserting the defect. A
+    credential pasted into a key position is ordinary-looking too.
+
+    The legitimate half of the original intent — diagnostics must stay useful —
+    is kept, and covered by ``test_diagnostics_still_identify_the_field_and_reason``
+    below: a *known* field with a bad value is still named in full.
+    """
+    with pytest.raises(ConfigurationError) as caught:
+        AppConfig.load(maximum_contracts=5)
+    assert "maximum_contracts" not in str(caught.value)
+    assert _REDACTED_FIELD in str(caught.value)
+
+
+def test_diagnostics_still_identify_the_field_and_reason() -> None:
+    with pytest.raises(ConfigurationError) as caught:
+        AppConfig.load(random_seed=MARKER)
+    assert "random_seed" in str(caught.value)
+    assert "int_parsing" in str(caught.value)
+    assert caught.value.details[0]["type"] == "int_parsing"
+
+
+def test_the_validation_error_is_not_chained() -> None:
+    """Chaining would reprint the raw inputs under "the direct cause"."""
+    with pytest.raises(ConfigurationError) as caught:
+        AppConfig.load(random_seed=MARKER)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None or MARKER not in str(caught.value.__context__)
+
+
+def test_a_formatted_traceback_does_not_leak_the_value() -> None:
+    try:
+        AppConfig.load(random_seed=MARKER)
+    except ConfigurationError as exc:
+        rendered = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    assert MARKER not in rendered
+
+
+def test_malformed_yaml_reports_position_not_content(tmp_path: Path) -> None:
+    """A parser message quotes the offending source line, which may be secret."""
+    path = tmp_path / "conf.yaml"
+    path.write_text(f"mode: [unclosed {MARKER}\n", encoding="utf-8")
+    with pytest.raises(ConfigurationError) as caught:
+        AppConfig.load(path)
+    assert MARKER not in str(caught.value)
+    assert "line" in str(caught.value)
+
+
+def test_non_utf8_yaml_is_a_configuration_error(tmp_path: Path) -> None:
+    """R-11: previously escaped as UnicodeDecodeError, outside the contract."""
+    path = tmp_path / "conf.yaml"
+    path.write_bytes("app_name: caf\xe9\n".encode("latin-1"))
+    with pytest.raises(ConfigurationError, match="not valid UTF-8"):
+        AppConfig.load(path)
+
+
+def test_an_unreadable_file_is_a_configuration_error(tmp_path: Path) -> None:
+    directory = tmp_path / "a_directory.yaml"
+    directory.mkdir()
+    with pytest.raises(ConfigurationError):
+        AppConfig.load(directory)
+
+
+# --------------------------------------------------------------------------
+# Correction D (R-02): resolved paths are absolute and stable.
+# --------------------------------------------------------------------------
+
+
+def test_a_relative_base_still_yields_absolute_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = AppConfig.load(base_path=Path("relative-root"))
+    assert config.resolved_data_root.is_absolute()
+    assert config.resolved_report_root.is_absolute()
+    assert config.resolved_data_root == tmp_path / "relative-root" / "data"
+
+
+def test_an_omitted_base_anchors_to_the_construction_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = AppConfig.load()
+    assert config.resolved_data_root == tmp_path / "data"
+
+
+def test_an_absolute_base_is_left_absolute(tmp_path: Path) -> None:
+    config = AppConfig.load(base_path=tmp_path)
+    assert config.resolved_data_root == tmp_path / "data"
+
+
+def test_resolved_paths_do_not_move_when_the_process_chdirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect: a configuration's meaning drifted while its identity did not."""
+    start = tmp_path / "start"
+    start.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(start)
+    config = AppConfig.load(base_path=Path("rel"))
+    before = config.resolved_data_root
+    monkeypatch.chdir(elsewhere)
+    assert config.resolved_data_root == before
+
+
+def test_dot_segments_are_collapsed_lexically(tmp_path: Path) -> None:
+    config = AppConfig.load(base_path=tmp_path / "a" / ".." / "b" / ".")
+    assert config.resolved_data_root == tmp_path / "b" / "data"
+
+
+def test_symlinks_are_not_resolved(tmp_path: Path) -> None:
+    """Recording the link target rather than the configured path would surprise."""
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    config = AppConfig.load(base_path=link)
+    assert config.resolved_data_root == link / "data"
+
+
+def test_the_target_need_not_exist(tmp_path: Path) -> None:
+    config = AppConfig.load(base_path=tmp_path / "not" / "created" / "yet")
+    assert config.resolved_data_root.is_absolute()
+
+
+def test_a_dumped_configuration_reloads_to_the_same_paths(tmp_path: Path) -> None:
+    original = AppConfig.load(base_path=tmp_path / "root")
+    reloaded = AppConfig(**original.model_dump(mode="json"))
+    assert reloaded.effective_base_path == original.effective_base_path
+    assert reloaded.resolved_data_root == original.resolved_data_root
+
+
+def test_the_fingerprint_tracks_the_effective_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two different directories must not share one recorded identity."""
+    first = tmp_path / "one"
+    first.mkdir()
+    second = tmp_path / "two"
+    second.mkdir()
+    monkeypatch.chdir(first)
+    one = AppConfig.load(base_path=Path("rel"))
+    monkeypatch.chdir(second)
+    two = AppConfig.load(base_path=Path("rel"))
+    assert one.resolved_data_root != two.resolved_data_root
+    assert one.fingerprint() != two.fingerprint()
+
+
+def test_the_fingerprint_is_stable_when_only_cwd_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = AppConfig.load(base_path=tmp_path)
+    before = config.fingerprint()
+    monkeypatch.chdir(tmp_path)
+    assert config.fingerprint() == before
+
+
+def test_an_os_error_while_reading_is_a_configuration_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A read that fails for any OS reason is still a malformed configuration."""
+    path = tmp_path / "conf.yaml"
+    path.write_text("mode: RESEARCH\n", encoding="utf-8")
+
+    def _fail(*_args: object, **_kwargs: object) -> str:
+        message = "simulated read failure"
+        raise OSError(5, message)
+
+    monkeypatch.setattr(Path, "read_text", _fail)
+    with pytest.raises(ConfigurationError, match="could not be read"):
+        AppConfig.load(path)
+
+
+def test_non_mapping_input_passes_through_the_base_validator() -> None:
+    """The validator must not assume it is always handed a dict."""
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate("not a mapping")

@@ -5,10 +5,21 @@ actually done and observed is in the stage reports under `../reports/stages/`.
 
 ## Current stage
 
-**Stage 00 — Professional Repository Foundation.** Implemented, validated
-locally and on remote CI (Python 3.12 and 3.13, all gates green), and awaiting
-independent adversarial review in
-[Zeorpo/qcf#1](https://github.com/Zeorpo/qcf/pull/1).
+**Stage 00 — Professional Repository Foundation**, correction pass **00-C**.
+
+The Stage 00-R review returned **CHANGES REQUIRED** with 13 findings, 12
+reproduced. That review was performed by the original implementer and is
+therefore a **self-review**; it does not satisfy the independent-review gate.
+
+Correction pass 00-C has been applied **locally and is uncommitted**: six
+corrections covering R-01 to R-08 and R-11, then Stage 00-D corrected H-01, R-12,
+R-13 and CR-01, and Stage 00-E corrected DR-01 and DR-02. Two findings (R-09,
+R-10) remain deferred, both packaging-related and neither blocking. See
+[`../reports/stages/stage-00-c-corrections.md`](../reports/stages/stage-00-c-corrections.md).
+
+Remote CI status for the corrections is **NOT RUN**: no push was authorised, so
+the green run recorded against `3941e61` predates every change in this pass and
+is not evidence for it.
 
 ## Starting state
 
@@ -24,7 +35,9 @@ Re-verified immediately before the bootstrap commit.
 
 | Stage | Outcome |
 | --- | --- |
-| 00 | Awaiting review — see [`../reports/stages/stage-00-report.md`](../reports/stages/stage-00-report.md) |
+| 00 | Implemented — [`../reports/stages/stage-00-report.md`](../reports/stages/stage-00-report.md) |
+| 00-R | Self-review, CHANGES REQUIRED (13 findings, 12 reproduced) |
+| 00-C | Corrections applied locally — [`../reports/stages/stage-00-c-corrections.md`](../reports/stages/stage-00-c-corrections.md) |
 
 ## What exists
 
@@ -56,6 +69,41 @@ the behaviour.
   because `Decimal` inspects concrete types instead of calling a coercion
   protocol. The conversion remains impossible; the exception type differs. See
   [ADR-0003](architecture/decisions/0003-configuration-and-unknown-values.md).
+- Log redaction is key-based. It does not sanitise free text a caller puts in an
+  event message. See [ADR-0004](architecture/decisions/0004-structured-logging-and-redaction.md).
+- Configuration fingerprints are machine-specific where paths differ between
+  machines. No cross-machine equivalence is claimed. See
+  [ADR-0009](architecture/decisions/0009-effective-path-context.md).
+- Two review findings remain open, both non-blocking and both packaging-related:
+  **R-09** — the sdist `include` patterns are unanchored, so they match a basename
+  at any depth and the archive can admit files the declaration never names. A
+  clean observed archive and `.gitignore` are not confidentiality guarantees; what
+  bounds this today is that the distribution is marked `Private :: Do Not Upload`
+  and is never published, and that the wheel — the installable artefact — is
+  correct. Precondition for closing: before any sdist is shared with anyone.
+  **R-10** — resolved in Stage 00-F by **contract correction, not by pinning**.
+  `uv sync --all-groups --frozen` builds QCF's own package in an isolated PEP 517
+  environment and selects seven build requirements outside `uv.lock`: `hatchling`
+  (declared `>=1.27`) plus `editables`, `packaging`, `pathspec`, `pluggy`,
+  `tomlkit` and `trove-classifiers`. `SECURITY.md` and ADR-0006 previously stated
+  that nothing was resolved at build or install time; both were false and are now
+  corrected. The residual limitation — build-time resolution is outside the lock —
+  is stated in the ADR-0006 boundary table along with what a stronger guarantee
+  would require. `scripts/check_project_boundary.py` rejects the retired phrasings.
+  Pinning `hatchling` alone was deliberately **not** done: it would leave
+  transitive build requirements, artifact availability and offline installation
+  uncontrolled while restoring the impression that they were.
+- **H-01, R-12 and R-13 are corrected** in Stage 00-D. Configuration now fails
+  closed on all three input channels, and diagnostics name only declared schema
+  fields. See
+  [ADR-0010](architecture/decisions/0010-fail-closed-configuration-and-safe-diagnostics.md).
+- **CR-01 is corrected**: the circular patch digest has been removed from the
+  Stage 00-C report. Patch digests live in an external handoff manifest generated
+  after export, which is never included in the patch it describes.
+- **DR-01 and DR-02 are corrected** in Stage 00-E. Configuration fields may not
+  declare aliases of any form — enforced at class-definition time, not merely
+  documented — and the safe-diagnostic boundary now states plainly that a
+  traceback prints the caller's own source line, which no library can prevent.
 
 ## Open decisions
 
@@ -66,8 +114,9 @@ continuous-futures adjustment method (Stage 02B), external policy encoding
 
 ## Next permitted stage
 
-**Stage 01 — Governance and Versioned Policy Contracts**, and only if the
-independent adversarial review of Stage 00 records no unresolved blockers.
+**None yet.** Stage 01 is not justified until a **fresh review** examines the
+00-C corrections and the deferred findings, and records no unresolved blockers.
+The 00-R review was a self-review and does not satisfy that gate.
 
 ## Prohibited premature work
 

@@ -9,6 +9,7 @@ beside.
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -46,3 +47,18 @@ def _reset_structlog() -> Iterator[None]:
     yield
     structlog.contextvars.clear_contextvars()
     structlog.reset_defaults()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_qcf_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove every ``QCF_``-prefixed variable before each test.
+
+    Configuration now fails closed on an unrecognised ``QCF_`` name (R-12), so
+    an unrelated variable in the developer's shell would make unrelated tests
+    fail — and, worse, a *matching* ambient variable would make them pass for
+    the wrong reason. Clearing the namespace makes every run start from the same
+    environment regardless of the machine. ``monkeypatch`` restores it
+    afterwards, so the developer's shell is left exactly as it was.
+    """
+    for name in [key for key in os.environ if key.upper().startswith("QCF_")]:
+        monkeypatch.delenv(name, raising=False)

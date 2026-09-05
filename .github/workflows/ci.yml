@@ -64,13 +64,18 @@ jobs:
         run: uv run pytest
 
       - name: Project boundary
-        run: uv run python scripts/check_project_boundary.py
+        # --strict so a check that could not run fails the build rather than
+        # being counted as "not failed".
+        run: uv run python scripts/check_project_boundary.py --strict
 
       - name: Secret scan
-        # The hook form verifies tracked files against the reviewed baseline and
-        # exits non-zero on a new finding, without rewriting the baseline the way
-        # `scan --baseline` would.
-        run: uv run detect-secrets-hook --baseline .secrets.baseline $(git ls-files)
+        # Via the tested runner, never `$(git ls-files)`: unquoted command
+        # substitution word-splits, so a path containing a space reached the
+        # scanner as several non-existent arguments and the step passed having
+        # scanned nothing. The runner enumerates NUL-delimited and passes an
+        # argument array, and reports a tool error (exit 2) distinctly from
+        # findings (exit 1) so an unperformed check cannot look like a clean one.
+        run: uv run python scripts/run_secret_scan.py
 
 # No artefacts are uploaded. Coverage reports and logs can carry file paths and
 # configuration; market data must never leave a machine at all. If an artefact

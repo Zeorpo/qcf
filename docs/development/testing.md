@@ -39,7 +39,7 @@ uv run ruff format --check .             # formatting
 uv run ruff check .                      # linting
 uv run mypy src tests scripts            # strict typing for src/qcf
 uv run pytest                            # tests, branch coverage, 90% gate
-uv run python scripts/check_project_boundary.py
+uv run python scripts/check_project_boundary.py --strict
 uv run detect-secrets scan --baseline .secrets.baseline
 git status --short                       # nothing unexpected staged or left behind
 git diff --check                         # no whitespace damage
@@ -51,6 +51,15 @@ Branch coverage, with a 90% floor configured in `pyproject.toml`. The floor is a
 minimum, not a target, and code is never excluded from measurement to reach it.
 Exclusions are limited to `TYPE_CHECKING` blocks, `@overload` stubs, and
 explicitly marked unreachable branches.
+
+Report **statements and branches separately**. With `branch = true`,
+coverage.py's headline percentage is a *combined* figure, not branch-only;
+describing it as branch coverage overstates it.
+
+Coverage must not depend on filesystem history. A first run in a clean checkout
+and a second run in the same checkout must produce the same number — an earlier
+version measured differently because a code path executed only once a cache
+directory happened to exist. Tests build the trees they need.
 
 ## Writing a property test
 

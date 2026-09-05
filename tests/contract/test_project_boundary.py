@@ -8,6 +8,7 @@ than assumed. No violation is written into tracked source.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -15,6 +16,7 @@ from pathlib import Path
 
 import pytest
 from scripts import check_project_boundary as boundary
+from scripts.repo_files import enumerate_project_files
 
 from qcf.core.config import AppConfig
 from qcf.core.enums import OperatingMode
@@ -286,6 +288,84 @@ def test_a_readme_that_never_names_the_product_code_is_caught(tmp_path: Path) ->
     assert boundary.check_product_code_terminology(tmp_path).status == "FAIL"
 
 
+# --------------------------------------------------------------------------
+# Finding R-10: SECURITY.md stated that CI "resolves nothing at build time"
+# while `uv sync --frozen` resolved seven build requirements from the index.
+# These guard the corrected wording, not prose quality in general.
+# --------------------------------------------------------------------------
+
+
+def _boundary_docs(
+    root: Path, security: str = "See docs/architecture/decisions/0006-reproducible-locking.md\n"
+) -> None:
+    """Write the two documents the check requires to exist and cross-reference."""
+    adr = root / "docs" / "architecture" / "decisions"
+    adr.mkdir(parents=True, exist_ok=True)
+    (adr / "0006-reproducible-locking.md").write_text(
+        "| Input | Controlled now | Not guaranteed now |\n", encoding="utf-8"
+    )
+    (root / "SECURITY.md").write_text(security, encoding="utf-8")
+
+
+def test_a_corrected_repository_passes_the_build_claim_check(tmp_path: Path) -> None:
+    _boundary_docs(tmp_path)
+    assert boundary.check_build_reproducibility_claims(tmp_path).status == "PASS"
+
+
+@pytest.mark.parametrize("claim", boundary.FALSE_BUILD_CLAIMS)
+def test_each_disproved_claim_is_caught(tmp_path: Path, claim: str) -> None:
+    """Every phrase on the list must actually be rejected, not just listed."""
+    _boundary_docs(tmp_path)
+    (tmp_path / "notes.md").write_text(f"The build {claim} on any machine.\n", encoding="utf-8")
+    result = boundary.check_build_reproducibility_claims(tmp_path)
+    assert result.status == "FAIL"
+    assert any("notes.md" in detail for detail in result.details)
+
+
+def test_the_claim_check_is_case_insensitive(tmp_path: Path) -> None:
+    _boundary_docs(tmp_path)
+    (tmp_path / "notes.md").write_text("CI RESOLVES NOTHING AT BUILD TIME.\n", encoding="utf-8")
+    assert boundary.check_build_reproducibility_claims(tmp_path).status == "FAIL"
+
+
+def test_the_marker_exempts_a_line_that_denies_the_claim(tmp_path: Path) -> None:
+    """Recording that a phrase was wrong requires writing it once."""
+    _boundary_docs(tmp_path)
+    (tmp_path / "notes.md").write_text(
+        f"It once said it resolves nothing at build time. "
+        f"<!-- {boundary.BUILD_CLAIM_ALLOW_MARKER} -->\n",
+        encoding="utf-8",
+    )
+    assert boundary.check_build_reproducibility_claims(tmp_path).status == "PASS"
+
+
+def test_a_missing_boundary_table_is_caught(tmp_path: Path) -> None:
+    """The correction is the table; losing it silently would undo this pass."""
+    _boundary_docs(tmp_path)
+    adr = tmp_path / "docs" / "architecture" / "decisions" / "0006-reproducible-locking.md"
+    adr.write_text("No table here.\n", encoding="utf-8")
+    result = boundary.check_build_reproducibility_claims(tmp_path)
+    assert result.status == "FAIL"
+    assert any("boundary table" in detail for detail in result.details)
+
+
+def test_a_missing_adr_is_caught(tmp_path: Path) -> None:
+    _boundary_docs(tmp_path)
+    (tmp_path / "docs" / "architecture" / "decisions" / "0006-reproducible-locking.md").unlink()
+    assert boundary.check_build_reproducibility_claims(tmp_path).status == "FAIL"
+
+
+def test_security_md_must_reference_the_boundary(tmp_path: Path) -> None:
+    _boundary_docs(tmp_path, security="Dependencies are pinned.\n")
+    result = boundary.check_build_reproducibility_claims(tmp_path)
+    assert result.status == "FAIL"
+    assert any("SECURITY.md" in detail for detail in result.details)
+
+
+def test_the_real_repository_satisfies_the_build_claim_check(repo_root: Path) -> None:
+    assert boundary.check_build_reproducibility_claims(repo_root).status == "PASS"
+
+
 def test_tracked_market_data_is_caught(tmp_path: Path) -> None:
     _git_repo(tmp_path, {"data/raw/6e_trades.csv": "ts,price\n"})
     result = boundary.check_no_tracked_market_data(tmp_path)
@@ -350,3 +430,69 @@ def test_unparseable_package_source_is_reported(tmp_path: Path) -> None:
 
 def test_an_absent_package_reports_skip(tmp_path: Path) -> None:
     assert boundary.check_no_real_order_functions(tmp_path).status == "SKIP"
+
+
+# --------------------------------------------------------------------------
+# Correction F (R-07): a check that could not run must not count as passing.
+# --------------------------------------------------------------------------
+
+
+def _tree_without_git(repo_root: Path, destination: Path) -> Path:
+    """Copy the repository's project files into a tree with no .git directory.
+
+    Every other check can then pass, which isolates the effect of --strict on
+    the git-dependent checks alone.
+
+    Copied from the working tree rather than `git archive HEAD`, so the test
+    does not depend on the repository having any commits -- an earlier version
+    used the archive form and failed in a fresh checkout, which is precisely the
+    environment dependence these corrections exist to remove.
+    """
+    for source in enumerate_project_files(repo_root):
+        target = destination / source.relative_to(repo_root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    return destination
+
+
+def test_strict_mode_fails_only_because_checks_were_skipped(
+    repo_root: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A check that could not run must not be counted as "not failed"."""
+    tree = _tree_without_git(repo_root, tmp_path)
+
+    assert boundary.main([str(tree)]) == 0, "without --strict, skips are non-fatal"
+    relaxed = capsys.readouterr().out
+    assert "skipped" in relaxed
+
+    assert boundary.main([str(tree), "--strict"]) == 1
+    strict = capsys.readouterr().out
+    assert "did not run" in strict
+
+
+def test_strict_mode_passes_on_the_repository(repo_root: Path) -> None:
+    assert boundary.main([str(repo_root), "--strict"]) == 0
+
+
+def test_without_strict_a_skip_alone_does_not_fail(tmp_path: Path) -> None:
+    """The default keeps SKIP visible but non-fatal, for local use."""
+    results = [
+        boundary.check_no_tracked_env_file(tmp_path),
+        boundary.check_no_tracked_market_data(tmp_path),
+    ]
+    assert all(result.status == "SKIP" for result in results)
+
+
+def test_the_scan_scope_excludes_third_party_code(repo_root: Path) -> None:
+    """R-06: the scan previously reached into any environment not named `.venv`."""
+    scanned = list(boundary._walk(repo_root, ".py"))
+    assert scanned, "expected the checker to find first-party Python files"
+    assert not [path for path in scanned if ".venv" in str(path) or "site-packages" in str(path)]
+
+
+def test_enumeration_failure_fails_the_check(tmp_path: Path) -> None:
+    """A check that cannot see the files must not report clean."""
+    missing = tmp_path / "absent"
+    result = boundary.check_no_forbidden_imports(missing)
+    assert result.status == "FAIL"
+    assert any("cannot enumerate" in detail for detail in result.details)

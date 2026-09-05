@@ -54,8 +54,10 @@ not you believe them to be real, and whether or not they appear to be expired.
 | No broker or network clients | Import deny-list enforced by AST inspection over `src/qcf` |
 | No tracked market data | `.gitignore` rules, verified by an executable test rather than by reading the patterns |
 | No committed `.env` | `.gitignore` plus a tracked-file check |
-| Secret detection | `detect-secrets` with a reviewed baseline, in pre-commit and in CI |
-| Log redaction | A structlog processor, so it cannot be forgotten at a call site |
+| Secret detection | `detect-secrets` with a reviewed baseline, in pre-commit and in CI, driven by `scripts/run_secret_scan.py` — NUL-delimited enumeration and argument arrays, so a path containing a space cannot silently go unscanned |
+| Log redaction | A structlog processor, so it cannot be forgotten at a call site. Key-based: see ADR-0004 for what it does **not** cover |
+| Exception output | `exception_output="safe"` by default — type and error code only, never the message or traceback |
+| Configuration diagnostics | Rejected values are never echoed, and the underlying validation error is detached rather than chained |
 | Least-privilege CI | `permissions: contents: read`; no secrets are exposed to any job |
 
 GitHub Advanced Security is **not** assumed to be available on this repository,
@@ -64,10 +66,27 @@ than by a platform feature.
 
 ## Dependencies
 
-Dependencies are pinned in `uv.lock` and installed with `--frozen`, so CI
-resolves nothing at build time. New dependencies require a written
+Project, optional and development dependencies are recorded in `uv.lock` with
+resolved versions and hashes, and installed with `--frozen`, which prevents uv
+from updating that lock during a sync. New dependencies require a written
 justification: the current stage must import them, and no broker, exchange,
 market-data, or order-routing client is admissible at any stage.
+
+**`--frozen` does not mean nothing is resolved.** QCF's own package is built in
+an isolated PEP 517 environment from `[build-system].requires`, and those build
+requirements are resolved separately from `uv.lock` on every sync. Observed on a
+clean cache with the CI command: `hatchling` (declared as `>=1.27`) plus
+`editables`, `packaging`, `pathspec`, `pluggy`, `tomlkit` and
+`trove-classifiers`. Four of those seven appear nowhere in `uv.lock`; the other
+three share a name with a locked entry but are selected independently, so
+equality today is coincidence rather than a constraint. Nor is installation
+offline: with an empty cache a sync needs the index for runtime and build
+requirements alike.
+
+This is a real and currently unclosed gap in supply-chain control — recorded as
+finding R-10 — not a claim that it is safe. See
+[ADR-0006](docs/architecture/decisions/0006-reproducible-locking.md) for the
+boundary table and what a stronger guarantee would require.
 
 ## Supported versions
 
